@@ -8,11 +8,14 @@ configfile: "config.yaml"
 def load_filtered_df():
     """Dynamically load and filter the dataframe."""
     df = pd.read_csv(config["raw_data_file"], sep="\t", low_memory=False)
-    df = df[df["library_strategy"] == 'WGS']
+    df = df[df["library_strategy"].isin(['WGS', 'WXS'])]
+    df = df[df["instrument_platform"].isin(['ILLUMINA'])]
+    # drop any row with empty fastq_ftp
+    df = df.dropna(subset=['fastq_ftp'])
     df['PE1'] = df['fastq_ftp'].apply(lambda x: x.split(';')[0] if isinstance(x, str) else None)
     df['PE2'] = df['fastq_ftp'].apply(lambda x: x.split(';')[1] if isinstance(x, str) and ';' in x else None)
     df['SE'] = df['fastq_ftp'].apply(lambda x: isinstance(x, str) and ';' not in x)
-    df = df[df['SE'] == True].head(1)
+    print(f"Number of runs: {len(df)}")
     return df
 
 def get_pe1(run_id):
@@ -50,12 +53,12 @@ rule download_and_sketch:
     shell:
         """
         if [[ "{params.se}" == "True" ]]; then
-            # Single-end case: stream one FASTA file
-            curl -s {params.pe1} | zcat | sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
+            # Single-end case: stream the FASTA file and ignore gzip errors
+            curl -s {params.pe1} | gzip -d -c --ignore-errors | sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
             > {output.stdout_log} 2> {output.stderr_log}
         else
-            # Paired-end case: concatenate R1 and R2 to simulate a single FASTA stream
-            cat <(curl -s {params.pe1} | zcat) <(curl -s {params.pe2} | zcat) | \
+            # Paired-end case: concatenate R1 and R2 to simulate a single FASTA stream and ignore gzip errors
+            cat <(curl -s {params.pe1} | gzip -d -c --ignore-errors) <(curl -s {params.pe2} | gzip -d -c --ignore-errors) | \
             sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
             > {output.stdout_log} 2> {output.stderr_log}
         fi
