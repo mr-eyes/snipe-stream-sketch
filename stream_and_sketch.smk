@@ -29,7 +29,6 @@ rule all:
     input:
         expand(os.path.join(config["signatures_dir"], "{run_id}.sig"), run_id=run_ids)
 
-# Rule for downloading and sketching with sourmash
 rule download_and_sketch:
     output:
         sig=os.path.join(config["signatures_dir"], "{run_id}.sig"),
@@ -42,17 +41,27 @@ rule download_and_sketch:
         se=lambda wildcards: runs_df[runs_df['run_accession'] == wildcards.run_id]['SE'].values[0]
     shell:
         """
+        TMPDIR=$(mktemp -d)
+
         if [[ "{params.se}" == "True" ]]; then
-            # Single-end case: stream the FASTA file
-            curl {params.pe1} | gunzip -c || true | sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
+            # Single-end case: download and process
+            curl -L -C - --retry 10 --retry-connrefused --retry-delay 5 --max-time 600 --limit-rate 1M \
+                {params.pe1} --output $TMPDIR/pe1.fastq.gz
+            gunzip -c $TMPDIR/pe1.fastq.gz | sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
             > {output.stdout_log} 2> {output.stderr_log}
         else
-            # Paired-end case: concatenate R1 and R2 to simulate a single FASTA stream
-            cat <(curl {params.pe1} | gunzip -c || true) <(curl {params.pe2} | gunzip -c || true) | \
-            sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
+            # Paired-end case: download both files and process
+            curl -L -C - --retry 10 --retry-connrefused --retry-delay 5 --max-time 600 --limit-rate 1M \
+                {params.pe1} --output $TMPDIR/pe1.fastq.gz
+            curl -L -C - --retry 10 --retry-connrefused --retry-delay 5 --max-time 600 --limit-rate 1M \
+                {params.pe2} --output $TMPDIR/pe2.fastq.gz
+            gunzip -c $TMPDIR/pe1.fastq.gz $TMPDIR/pe2.fastq.gz | sourmash sketch dna - -p k=51,scaled=10000,abund --name {wildcards.run_id} -o {output.sig} \
             > {output.stdout_log} 2> {output.stderr_log}
         fi
 
         # Extract the line containing "sequences taken from 1 files"
         grep "sequences taken from 1 files" {output.stderr_log} > {output.sketched_seq_log}
+
+        # Clean up temporary files
+        rm -rf $TMPDIR
         """
