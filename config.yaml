@@ -2,3 +2,4 @@
 raw_data_file: "data/human_ebi.txt"
 signatures_dir: "results/signatures"
 logs_dir: "results/logs"
+log_number_of_sketched_seqs_dir: "results/log_number_of_sketched_seqs"
