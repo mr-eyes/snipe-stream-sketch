@@ -1,43 +1,33 @@
-import os
 import pandas as pd
-
-# Load configuration
 configfile: "config.yaml"
 
-# Helper functions to filter and extract relevant information from the dataframe
-def load_filtered_df():
-    """Dynamically load and filter the dataframe."""
-    df = pd.read_csv(config["raw_data_file"], sep="\t", low_memory=False)
-    df = df[df["library_strategy"].isin(['WGS', 'WXS'])]
-    df = df[df["instrument_platform"].isin(['ILLUMINA'])]
-    # drop any row with empty fastq_ftp
-    df = df.dropna(subset=['fastq_ftp'])
-    df['PE1'] = df['fastq_ftp'].apply(lambda x: x.split(';')[0] if isinstance(x, str) else None)
-    df['PE2'] = df['fastq_ftp'].apply(lambda x: x.split(';')[1] if isinstance(x, str) and ';' in x else None)
-    df['SE'] = df['fastq_ftp'].apply(lambda x: isinstance(x, str) and ';' not in x)
-    print(f"Number of runs: {len(df)}")
-    return df
 
-def get_pe1(run_id):
-    df = load_filtered_df()
-    return df[df['run_accession'] == run_id]['PE1'].values[0]
+# Load and filter dataframe, then save relevant columns for later use
+df = pd.read_csv(config["raw_data_file"], sep="\t", low_memory=False)
+df = df[df["library_strategy"].isin(['WGS', 'WXS'])]
+df = df[df["instrument_platform"].isin(['ILLUMINA'])]
+df = df.dropna(subset=['fastq_ftp'])
 
-def get_pe2(run_id):
-    df = load_filtered_df()
-    return df[df['run_accession'] == run_id]['PE2'].values[0]
+# Split PE1, PE2, SE
+df['PE1'] = df['fastq_ftp'].apply(lambda x: x.split(';')[0] if isinstance(x, str) else None)
+df['PE2'] = df['fastq_ftp'].apply(lambda x: x.split(';')[1] if isinstance(x, str) and ';' in x else None)
+df['SE'] = df['fastq_ftp'].apply(lambda x: isinstance(x, str) and ';' not in x)
 
-def is_single_end(run_id):
-    df = load_filtered_df()
-    return df[df['run_accession'] == run_id]['SE'].values[0]
+# Save processed data
+df[['run_accession', 'PE1', 'PE2', 'SE']].to_csv("preprocessed_runs.csv", index=False)
 
-def get_run_ids():
-    df = load_filtered_df()
-    return df['run_accession'].tolist()
+runs_df = df.copy()
+
+run_ids = runs_df['run_accession'].tolist()
+
+print(f"Number of runs: {len(runs_df)}")    
+
+
 
 # Final target rule to ensure all signatures are created
 rule all:
     input:
-        expand(os.path.join(config["signatures_dir"], "{run_id}.sig"), run_id=get_run_ids())
+        expand(os.path.join(config["signatures_dir"], "{run_id}.sig"), run_id=run_ids)
 
 # Rule for downloading and sketching with sourmash
 rule download_and_sketch:
@@ -47,9 +37,9 @@ rule download_and_sketch:
         stderr_log=os.path.join(config["logs_dir"], "{run_id}.err"),
         sketched_seq_log=os.path.join(config["log_number_of_sketched_seqs_dir"], "{run_id}_sketched_seqs.log")
     params:
-        pe1=lambda wildcards: get_pe1(wildcards.run_id),
-        pe2=lambda wildcards: get_pe2(wildcards.run_id),
-        se=lambda wildcards: is_single_end(wildcards.run_id)
+        pe1=lambda wildcards: runs_df[runs_df['run_accession'] == wildcards.run_id]['PE1'].values[0],
+        pe2=lambda wildcards: runs_df[runs_df['run_accession'] == wildcards.run_id]['PE2'].values[0],
+        se=lambda wildcards: runs_df[runs_df['run_accession'] == wildcards.run_id]['SE'].values[0]
     shell:
         """
         if [[ "{params.se}" == "True" ]]; then
