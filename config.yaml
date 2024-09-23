@@ -1,0 +1,4 @@
+# Configuration file for project paths
+raw_data_file: "data/human_ebi.txt"
+signatures_dir: "results/signatures"
+logs_dir: "results/logs"
